@@ -2,7 +2,6 @@ version: "3.7"
 services:
   spark-master:
     build:
-      context: ./spark
       dockerfile: ./Dockerfile
     container_name: "spark-master"
     environment:
@@ -26,7 +25,7 @@ services:
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_MEMORY=4G
       - SPARK_WORKER_CORES=1
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
@@ -41,7 +40,7 @@ services:
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_MEMORY=4G
       - SPARK_WORKER_CORES=1
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
@@ -49,6 +48,19 @@ services:
       - SPARK_SSL_ENABLED=no
     networks:
       - spark_network
+
+  spark-history-server:
+    image: docker.io/bitnami/spark:3.3
+    container_name: "spark-history"
+    command: bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    depends_on:
+      - spark-master
+    ports:
+      - "18081:18080"
+    environment:
+      SPARK_HISTORY_OPTS: -Dspark.history.fs.logDirectory=/tmp/spark-events
+    volumes:
+      - /tmp/spark-events:/tmp/spark-events
 
   minio:
     hostname: minio
@@ -75,29 +87,54 @@ services:
     environment:
       - AWS_ACCESS_KEY_ID=minio
       - AWS_SECRET_ACCESS_KEY=minio123
-      - AWS_REGION=us-east-1
+      - AWS_REGION=ap-northeast-2
     entrypoint: >
-      /bin/sh -c " until (/usr/bin/mc config host add minio http://minio:9000 minio minio123) do echo '...waiting...' && sleep 1; done; /usr/bin/mc mb minio/warehouse; /usr/bin/mc policy set public minio/warehouse; exit 0; "
+      /bin/sh -c "
+      /usr/bin/mc config host add minio http://minio:9000 minio minio123;
+      if ! /usr/bin/mc ls minio/warehouse > /dev/null 2>&1; then
+          /usr/bin/mc mb minio/warehouse;
+      fi;
+      /usr/bin/mc policy set public minio/warehouse;
+      exit 0;"
     depends_on:
       - minio
     networks:
       - spark_network
 
-  spark-notebook:
-    build:
-      context: ./notebooks
-      dockerfile: ./Dockerfile
-    container_name: "spark-notebook"
-    user: root
-    environment:
-      - JUPYTER_ENABLE_LAB="yes"
-      - GRANT_SUDO="yes"
-    volumes:
-      - ./notebooks:/home/jovyan/work
-      - ./notebooks/spark-defaults.conf:/usr/local/spark/conf/spark-defaults.conf
+  trino:
+    hostname: trino
+    image: 'trinodb/trino:351'
     ports:
-      - "8888:8888"
-      - "4040:4040"
+      - '8086:8080'
+    volumes:
+      - ./etc:/usr/lib/trino/etc:ro
+    networks:
+      - spark_network
+
+  mariadb:
+    hostname: mariadb
+    image: mariadb:10.5.8
+    ports:
+      - 3306:3306
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: admin
+      MYSQL_DATABASE: metastore_db
+    networks:
+      - spark_network
+
+  hive-metastore:
+    hostname: hive-metastore
+    image: 'bitsondatadev/hive-metastore:latest'
+    ports:
+      - '9083:9083' # Metastore Thrift
+    volumes:
+      - ./conf/metastore-site.xml:/opt/apache-hive-metastore-3.0.0-bin/conf/metastore-site.xml:ro
+    environment:
+      METASTORE_DB_HOSTNAME: mariadb
+    depends_on:
+      - mariadb
     networks:
       - spark_network
 
