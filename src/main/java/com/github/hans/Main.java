@@ -15,20 +15,17 @@ public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
 
     public static void main(String[] args) {
-        if (args.length < 1) {
+        if (args.length < 2) {
             logger.error("Usage: Main <FilePath>");
             System.exit(1);
         }
 
         final String inputFilePath = args[0];
+        final String outputFilePath = args[1];
 
         SparkSession spark = SparkSession.builder()
                 .appName("Backpackr DE PJT Spark Application")
                 .master("spark://spark-master:7077")
-                .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-                .config("spark.hadoop.fs.s3a.access.key", "minio")
-                .config("spark.hadoop.fs.s3a.secret.key", "minio123")
-                .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
                 .config("spark.hadoop.fs.s3a.path.style.access", "true")
                 .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
                 .getOrCreate();
@@ -36,21 +33,21 @@ public class Main {
         // 예외를 수집하기 위한 Accumulator 생성
         CollectionAccumulator<String> exceptionAccumulator = spark.sparkContext().collectionAccumulator("Exceptions");
 
+        // 스키마 정의
+        StructType schema = new StructType(new StructField[]{
+                new StructField("event_time", DataTypes.TimestampType, true, Metadata.empty()),
+                new StructField("event_type", DataTypes.StringType, true, Metadata.empty()),
+                new StructField("product_id", DataTypes.IntegerType, true, Metadata.empty()),
+                new StructField("category_id", DataTypes.DoubleType, true, Metadata.empty()),
+                new StructField("category_code", DataTypes.StringType, true, Metadata.empty()),
+                new StructField("brand", DataTypes.StringType, true, Metadata.empty()),
+                new StructField("price", DataTypes.DoubleType, true, Metadata.empty()),
+                new StructField("user_id", DataTypes.IntegerType, true, Metadata.empty()),
+                new StructField("user_session", DataTypes.StringType, true, Metadata.empty())
+        });
+
         try {
             logger.info("Processing {}", inputFilePath);
-
-            // 스키마 정의 (필요에 따라 스키마를 조정하세요)
-            StructType schema = new StructType(new StructField[]{
-                    new StructField("event_time", DataTypes.TimestampType, true, Metadata.empty()),
-                    new StructField("event_type", DataTypes.StringType, true, Metadata.empty()),
-                    new StructField("product_id", DataTypes.IntegerType, true, Metadata.empty()),
-                    new StructField("category_id", DataTypes.DoubleType, true, Metadata.empty()),
-                    new StructField("category_code", DataTypes.StringType, true, Metadata.empty()),
-                    new StructField("brand", DataTypes.StringType, true, Metadata.empty()),
-                    new StructField("price", DataTypes.DoubleType, true, Metadata.empty()),
-                    new StructField("user_id", DataTypes.IntegerType, true, Metadata.empty()),
-                    new StructField("user_session", DataTypes.StringType, true, Metadata.empty())
-            });
 
             // 데이터 로드
             Dataset<Row> rawData = spark.read()
@@ -58,7 +55,7 @@ public class Main {
                     .schema(schema)
                     .csv(inputFilePath);
 
-            // event_time을 KST 기준의 etl_date로 변환하고 예외 처리
+            // event_time을 KST 기준의 파티션 칼럼인 etl_date로 변환
             Dataset<Row> processedData = rawData.withColumn("etl_date",
                     functions.to_date(
                             functions.from_utc_timestamp(
@@ -70,7 +67,7 @@ public class Main {
                         .partitionBy("etl_date")
                         .mode(SaveMode.Overwrite)
                         .option("compression", "snappy")
-                        .parquet("s3a://warehouse/ecommerce-user-events/"); // 데이터 저장 임시 경로
+                        .parquet(outputFilePath);
             } else {
                 throw new Exception("No data to save.");
             }
@@ -89,11 +86,11 @@ public class Main {
             String fileName = path.getFileName().toString();
 
             String exceptionFileName = fileName + ".exceptions.parquet";
-            String outputPath = "s3a://warehouse/ecommerce-user-events-exceptions/" + exceptionFileName; // 에러 로그 임시 경로
+            String outputExceptionFilePath = "s3a://warehouse/ecommerce-user-events-exceptions/" + exceptionFileName; // 에러 로그 임시 경로
 
             exceptionDF.write()
                     .mode(SaveMode.Overwrite)
-                    .parquet(outputPath);
+                    .parquet(outputExceptionFilePath);
         }
 
         spark.stop();
