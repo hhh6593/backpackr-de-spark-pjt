@@ -90,6 +90,7 @@ Spark submit
     SELECT
         *
     FROM minio."default".ecommerce_user_events 
+    WHERE etl_date = DATE '2019-10-01'
     LIMIT 100;
     
 
