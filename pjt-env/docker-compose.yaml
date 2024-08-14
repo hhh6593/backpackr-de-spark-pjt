@@ -95,6 +95,9 @@ services:
           /usr/bin/mc mb minio/warehouse;
       fi;
       /usr/bin/mc policy set public minio/warehouse;
+      if ! /usr/bin/mc ls minio/warehouse/ecommerce-user-events-raw > /dev/null 2>&1; then
+          /usr/bin/mc mb minio/warehouse/ecommerce-user-events-raw;
+      fi;
       exit 0;"
     depends_on:
       - minio
