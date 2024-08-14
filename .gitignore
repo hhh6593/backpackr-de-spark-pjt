@@ -39,4 +39,4 @@ build/
 ### Mac OS ###
 .DS_Store
 
-pjt-env/minio/*
+pjt-env/minio
